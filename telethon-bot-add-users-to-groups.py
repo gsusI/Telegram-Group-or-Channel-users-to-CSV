@@ -54,7 +54,7 @@ def add_users_to_group():
 
     for chat in chats:
         try:
-            if chat.megagroup== True:
+            if chat.megagroup== True: # CONDITION TO ONLY LIST MEGA GROUPS.
                 groups.append(chat)
         except:
             continue
