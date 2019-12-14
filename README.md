@@ -10,7 +10,7 @@ Run `pip3 install -r requirements.txt` from the projects root directory.
 
 ### Telegram Configuration
 
-1. To run it you need to generate API credentials for your Telegram user, you can do it [here](https://core.telegram.org/api/obtaining_api_id)
+1. To run it you need to generate API credentials for your Telegram user, you can do it [here](https://core.telegram.org/api/obtaining_api_id), and access your already created ones [here](https://my.telegram.org/apps)
 2. Replace your credentials in the script
     ```python
     api_id = 000000        # YOUR API_ID
