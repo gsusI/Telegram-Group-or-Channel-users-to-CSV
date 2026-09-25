@@ -47,7 +47,7 @@ export TELEGRAM_API_HASH=your_api_hash
 export TELEGRAM_PHONE=+34123456789
 ```
 
-`TELEGRAM_PHONE` is optional; tool prompts for it if absent. First connection also prompts for Telegram login code and, if enabled, account password. Do not commit credentials or session file. New command interface stores its session in `~/.telegram-group-csv/session.session` by default. Original menu reuses the old phone-named session file when a phone is configured. Set `TELEGRAM_SESSION` to another path if needed; protect that file as you would a login token.
+`TELEGRAM_PHONE` is optional; tool prompts for it if absent. First connection also prompts for Telegram login code and, if enabled, account password. Do not commit credentials or session file. New command interface stores its session in `~/.telegram-group-csv/session.session` by default. Original menu reuses the old phone-named session file when a phone is configured. Set `TELEGRAM_SESSION` to another path if needed; protect that file as you would a login token. Git ignores environment files, sessions, and CSV exports, including exports with custom filenames. Never force-add them.
 
 Commands below use `python`; substitute `.venv\Scripts\python.exe` on Windows or `.venv/bin/python` on macOS/Linux. These subcommands are additional interface; the original script also accepts them.
 
