@@ -1,1 +1,2 @@
 Telethon>=1.45,<2
+qrcode>=8,<9

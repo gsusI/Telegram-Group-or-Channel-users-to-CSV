@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import telegram_csv as tool
 
@@ -66,6 +66,89 @@ class CsvTests(unittest.TestCase):
         with output.open(encoding="utf-8-sig", newline="") as stream:
             self.assertEqual(len(list(csv.reader(stream))), 2)
         self.assertEqual(list(Path(self.directory.name).glob("*.tmp")), [])
+
+    def test_resumable_export_keeps_checkpoint_and_old_output(self):
+        output = Path(self.directory.name) / "members.csv"
+        output.write_text("previous", encoding="utf-8")
+        chat = SimpleNamespace(id=9, title="Group", participants_count=5)
+        alice = SimpleNamespace(username="alice", id=1, access_hash=11,
+                                first_name="Alice", last_name=None)
+        bob = SimpleNamespace(username="bob", id=2, access_hash=22,
+                              first_name="Bob", last_name=None)
+
+        def interrupted():
+            yield alice
+            raise RuntimeError("interrupted")
+
+        client = Mock()
+        client.get_me.return_value.id = 100
+        client.iter_participants.side_effect = lambda chat: interrupted()
+        with self.assertRaisesRegex(RuntimeError, "interrupted"):
+            tool.export_members_resumable(client, chat, output, overwrite=True)
+        checkpoint = output.with_name(output.name + ".checkpoint.sqlite")
+        self.assertTrue(checkpoint.is_file())
+        self.assertEqual(output.read_text(encoding="utf-8"), "previous")
+        with self.assertRaises(FileExistsError):
+            tool.export_members_resumable(client, chat, output, overwrite=True)
+        with self.assertRaisesRegex(ValueError, "different chat"):
+            tool.export_members_resumable(client, SimpleNamespace(id=10, title="Other"),
+                                          output, overwrite=True, resume=True)
+        other_account = Mock()
+        other_account.get_me.return_value.id = 200
+        with self.assertRaisesRegex(ValueError, "different Telegram account"):
+            tool.export_members_resumable(other_account, chat, output,
+                                          overwrite=True, resume=True)
+
+        client.iter_participants.side_effect = lambda chat: iter([alice, bob])
+        self.assertEqual(tool.export_members_resumable(client, chat, output,
+                                                        overwrite=True, resume=True), 2)
+        self.assertFalse(checkpoint.exists())
+        with output.open(encoding="utf-8-sig", newline="") as stream:
+            rows = list(csv.reader(stream))
+        self.assertEqual(rows[0], list(tool.CSV_COLUMNS))
+        self.assertEqual([row[1] for row in rows[1:]], ["1", "2"])
+
+    def test_local_diff_and_dedupe_never_connect(self):
+        old = Path(self.directory.name) / "old.csv"
+        new = Path(self.directory.name) / "new.csv"
+        header = ",".join(tool.CSV_COLUMNS) + "\n"
+        old.write_text(header + "alice,1,11,Alice,Group,9\n"
+                       "bob,2,22,Bob,Group,9\n", encoding="utf-8")
+        new.write_text(header + "bob,2,22,Bob,Group,9\n"
+                       "carol,3,33,Carol,Group,9\n", encoding="utf-8")
+        difference = Path(self.directory.name) / "difference.csv"
+        unique = Path(self.directory.name) / "unique.csv"
+        with patch.object(tool, "connect_client") as connect:
+            self.assertEqual(tool.main(["diff", str(old), str(new),
+                                        "--output", str(difference)]), 0)
+            self.assertEqual(tool.main(["dedupe", str(old), str(new),
+                                        "--output", str(unique)]), 0)
+        connect.assert_not_called()
+        with difference.open(encoding="utf-8-sig", newline="") as stream:
+            changes = list(csv.DictReader(stream))
+        self.assertEqual([(row["user_id"], row["change"]) for row in changes],
+                         [("3", "newly_observed"), ("1", "no_longer_visible")])
+        with unique.open(encoding="utf-8-sig", newline="") as stream:
+            members = list(csv.DictReader(stream))
+        self.assertEqual([row["user_id"] for row in members], ["1", "2", "3"])
+        self.assertNotIn("user_access_hash", members[0])
+        with self.assertRaises(FileExistsError):
+            tool.dedupe_exports([old, new], unique)
+
+    def test_export_many_continues_after_one_failure(self):
+        first = SimpleNamespace(id=1, title="First")
+        second = SimpleNamespace(id=2, title="Second")
+        client = Mock()
+        client.iter_dialogs.return_value = iter([])
+        with patch.object(tool, "connect_client", return_value=client), \
+             patch.object(tool, "resolve_chat", side_effect=[first, second]), \
+             patch.object(tool, "export_members", side_effect=[ValueError("denied"), 2]) as export, \
+             patch("sys.stderr", io.StringIO()):
+            result = tool.main(["export-many", "first", "second", "--output-dir",
+                                self.directory.name])
+        self.assertEqual(result, 1)
+        self.assertEqual(export.call_count, 2)
+        client.disconnect.assert_called_once()
 
     def test_legacy_export_keeps_filename_header_and_no_bom(self):
         chat = SimpleNamespace(id=9, title="Hello World")
@@ -318,6 +401,43 @@ class InviteTests(unittest.TestCase):
 
 
 class LegacyMenuTests(unittest.TestCase):
+    def test_qr_login_uses_local_session_without_phone_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory) / "login"
+            client = Mock()
+            client.connect = AsyncMock()
+            client.disconnect = AsyncMock()
+            client.is_user_authorized = AsyncMock(return_value=False)
+            login = Mock(url="tg://login?token=fake")
+            login.wait = AsyncMock()
+            client.qr_login = AsyncMock(return_value=login)
+            with patch.dict(os.environ, {"TELEGRAM_API_ID": "123",
+                                      "TELEGRAM_API_HASH": "fake",
+                                      "TELEGRAM_SESSION": str(session)}), \
+                 patch("telethon.TelegramClient", return_value=client) as client_class, \
+                 patch("qrcode.QRCode") as qr_class:
+                self.assertEqual(tool.main(["login", "--qr"]), 0)
+            client_class.assert_called_once_with(str(session), 123, "fake")
+            client.qr_login.assert_awaited_once()
+            login.wait.assert_awaited_once()
+            client.disconnect.assert_awaited_once()
+            qr_class.return_value.add_data.assert_called_once_with(login.url)
+
+    def test_doctor_never_contacts_telegram_or_prints_secret(self):
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory) / "custom.name"
+            Path(str(session) + ".session").write_text("fake", encoding="utf-8")
+            with patch.dict(os.environ, {"TELEGRAM_API_ID": "123",
+                                      "TELEGRAM_API_HASH": "private-value",
+                                      "TELEGRAM_SESSION": str(session)}), \
+                 patch.object(tool, "connect_client") as connect, \
+                 patch("sys.stdout", output):
+                self.assertEqual(tool.main(["doctor"]), 0)
+            connect.assert_not_called()
+        self.assertIn("Session: present", output.getvalue())
+        self.assertNotIn("private-value", output.getvalue())
+
     def test_original_credentials_and_session_name_still_work(self):
         with patch.dict(os.environ, {}, clear=True), \
              patch("telethon.sync.TelegramClient") as client_class:
