@@ -13,7 +13,7 @@ python telethon-bot-add-users-to-groups.py
 python telethon-bot-add-users-to-groups.py members.csv
 ```
 
-Menu option 1 exports to the original `members-GROUP-NAME.csv` filename with the original `username,user id,access hash,name,group,group id` header. It replaces that file, as before. Option 2 prompts for username or ID mode and sends invitations; the menu choice is the authorization for that action. Option 3 displays the CSV. Existing credentials can still be entered by editing `api_id`, `api_hash`, and `phone` near the top of the original script. When a real phone is configured there, its old session filename is reused. Environment variables override those values.
+Menu option 1 exports to the original `members-GROUP-NAME.csv` filename with the original `username,user id,access hash,name,group,group id` header. It replaces that file, as before. Option 2 lists supergroups and broadcast channels, prompts for username or ID mode, and sends invitations; the menu choice is the authorization for that action. Your account needs permission to invite users to the selected chat. Option 3 displays the CSV. Existing credentials can still be entered by editing `api_id`, `api_hash`, and `phone` near the top of the original script. When a real phone is configured there, its old session filename is reused. Environment variables override those values.
 
 ## Install
 

@@ -268,6 +268,23 @@ class LegacyMenuTests(unittest.TestCase):
             self.assertTrue(invite.call_args.kwargs["execute"])
             client.disconnect.assert_called_once()
 
+    def test_numbered_invite_flow_lists_broadcast_channel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "users.csv"
+            path.write_text("alice\n", encoding="utf-8")
+            client = Mock()
+            channel = SimpleNamespace(id=10, title="Channel", broadcast=True)
+            item = SimpleNamespace(id=10, name="Channel", entity=channel,
+                                   is_group=False, is_channel=True)
+            client.iter_dialogs.return_value = iter([item])
+            with patch("builtins.input", side_effect=["2", "0", "1"]), \
+                 patch.object(tool, "connect_client", return_value=client), \
+                 patch.object(tool, "invite_members", return_value=(1, 0)) as invite, \
+                 patch("sys.stderr", io.StringIO()):
+                self.assertEqual(tool.main([str(path)]), 0)
+            self.assertIs(invite.call_args.args[1], channel)
+            client.disconnect.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

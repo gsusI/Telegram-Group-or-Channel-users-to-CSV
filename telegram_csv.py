@@ -285,7 +285,7 @@ def legacy_main(argv, credentials=None):
     print("What do you want to do:")
     try:
         mode = int(input("Enter \n1-List users in a group\n"
-                         "2-Add users from CSV to Group (CSV must be passed as a parameter to the script\n"
+                         "2-Add users from CSV to Group or Channel (pass CSV path as a script argument)\n"
                          "3-Show CSV\n\nYour option:  "))
         if mode not in (1, 2, 3):
             raise ValueError("Choose 1, 2, or 3")
@@ -310,8 +310,9 @@ def legacy_main(argv, credentials=None):
                       "Telegram may hide others; completeness is unknown.")
             else:
                 available = [dialog for dialog in available
-                             if getattr(dialog.entity, "megagroup", False)]
-                chat = _choose_chat(available, "Choose a group to add members:")
+                             if (getattr(dialog.entity, "megagroup", False) or
+                                 getattr(dialog.entity, "broadcast", False))]
+                chat = _choose_chat(available, "Choose a group or channel to add members:")
                 selection = int(input("Enter 1 to add by username or 2 to add by ID: "))
                 if selection == 1:
                     invitees = [user for user in invitees if user.username]
