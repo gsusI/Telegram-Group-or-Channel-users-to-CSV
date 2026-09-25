@@ -73,6 +73,18 @@ class CsvTests(unittest.TestCase):
             self.assertEqual(next(csv.reader(stream)), list(tool.LEGACY_CSV_COLUMNS))
         self.assertEqual(tool.read_invitees(output), [tool.Invitee("alice", 1, 2)])
 
+    def test_admin_required_keeps_existing_export(self):
+        from telethon.errors import ChatAdminRequiredError
+
+        output = Path(self.directory.name) / "members.csv"
+        output.write_text("existing", encoding="utf-8")
+        client = Mock()
+        client.iter_participants.side_effect = ChatAdminRequiredError(request=None)
+        with self.assertRaisesRegex(ValueError, "admin access"):
+            tool.export_members(client, SimpleNamespace(id=9, title="Group"), output,
+                                overwrite=True)
+        self.assertEqual(output.read_text(encoding="utf-8"), "existing")
+
     def test_all_dialogs_and_duplicate_names(self):
         items = [SimpleNamespace(id=index, name="same", entity=object(),
                                  is_group=True, is_channel=False) for index in range(250)]
@@ -97,11 +109,82 @@ class InviteTests(unittest.TestCase):
 
         client = Mock()
         client.get_input_entity.side_effect = ["first", "second"]
-        client.side_effect = [None, PeerFloodError(request=None)]
+        client.side_effect = [SimpleNamespace(missing_invitees=[]),
+                              PeerFloodError(request=None)]
         invitees = [tool.Invitee(name) for name in ("alice", "bob", "carol")]
         with self.assertRaisesRegex(RuntimeError, "stopped after 1 invites"):
             tool.invite_members(client, object(), invitees, delay=0, execute=True)
         self.assertEqual(client.call_count, 2)
+
+    def test_missing_invitee_is_not_reported_as_success(self):
+        from telethon.tl.types import MissingInvitee
+        from telethon.tl.types.messages import InvitedUsers
+
+        client = Mock()
+        client.get_input_entity.return_value = "alice"
+        client.return_value = InvitedUsers(updates=None,
+                                           missing_invitees=[MissingInvitee(user_id=1)])
+        self.assertEqual(tool.invite_members(client, SimpleNamespace(id=9),
+                                             [tool.Invitee("alice")], delay=0, execute=True),
+                         (0, 1))
+
+    def test_unknown_invite_result_is_not_reported_as_success(self):
+        client = Mock()
+        client.get_input_entity.return_value = "alice"
+        client.return_value = None
+        with self.assertRaisesRegex(RuntimeError, "outcome was not recorded"):
+            tool.invite_members(client, SimpleNamespace(id=9), [tool.Invitee("alice")],
+                                delay=0, execute=True)
+
+    def test_checkpoint_resumes_without_reinviting_recorded_users(self):
+        from telethon.errors import PeerFloodError
+
+        with tempfile.TemporaryDirectory() as directory:
+            progress = Path(directory) / "progress.csv"
+            chat = SimpleNamespace(id=9)
+            invitees = [tool.Invitee("alice", 1, 11), tool.Invitee("bob", 2, 22),
+                        tool.Invitee("carol", 3, 33)]
+            client = Mock()
+            client.get_input_entity.side_effect = ["alice", "bob", "carol"]
+            client.side_effect = [SimpleNamespace(missing_invitees=[]),
+                                  PeerFloodError(request=None)]
+            with self.assertRaisesRegex(RuntimeError, "stopped after 1 invites"):
+                tool.invite_members(client, chat, invitees, delay=0, execute=True,
+                                    progress=progress)
+            with progress.open(encoding="utf-8-sig", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual([(row["user_id"], row["status"]) for row in rows],
+                             [("1", "invited")])
+
+            resumed = Mock()
+            resumed.get_input_entity.side_effect = ["bob", "carol"]
+            resumed.side_effect = [SimpleNamespace(missing_invitees=[object()]),
+                                   SimpleNamespace(missing_invitees=[])]
+            self.assertEqual(tool.invite_members(resumed, chat, invitees, delay=0,
+                                                 execute=True, progress=progress,
+                                                 resume=True), (1, 1))
+            self.assertEqual(resumed.call_count, 2)
+            with progress.open(encoding="utf-8-sig", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual([row["status"] for row in rows],
+                             ["invited", "not_invited", "invited"])
+            self.assertEqual(tool.invite_members(Mock(), chat, invitees, delay=0,
+                                                 execute=True, progress=progress,
+                                                 resume=True), (0, 0))
+            with self.assertRaisesRegex(ValueError, "different chat"):
+                tool.invite_members(Mock(), SimpleNamespace(id=10), invitees,
+                                    delay=0, execute=True, progress=progress, resume=True)
+
+    def test_checkpoint_never_overwrites_without_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            progress = Path(directory) / "progress.csv"
+            progress.write_text("existing", encoding="utf-8")
+            client = Mock()
+            with self.assertRaises(FileExistsError):
+                tool.invite_members(client, SimpleNamespace(id=9), [tool.Invitee("alice")],
+                                    execute=True, progress=progress)
+            client.assert_not_called()
+            self.assertEqual(progress.read_text(encoding="utf-8"), "existing")
 
 
 class LegacyMenuTests(unittest.TestCase):

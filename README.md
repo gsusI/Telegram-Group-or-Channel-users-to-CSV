@@ -59,9 +59,9 @@ python telegram_csv.py export CHAT_ID
 python telegram_csv.py export CHAT_ID --output members.csv
 ```
 
-`dialogs` lists group and channel IDs, including those beyond first page. `export` also accepts exact chat title or public username. Output defaults to `members-NAME-ID.csv` in current directory. Use `--overwrite` to replace an existing file. If a fetch fails, existing output remains intact and temporary output is removed.
+`dialogs` lists group and channel IDs, including those beyond first page. `export` also accepts exact chat title or public username. Output defaults to `members-NAME-ID.csv` in current directory. Use `--overwrite` to replace an existing file. If a fetch fails, existing output remains intact and temporary output is removed. If Telegram requires admin access to list members, the command reports that requirement and does not replace the output.
 
-CSV columns are `username,user_id,user_access_hash,name,group,group_id`. File is UTF-8 with a BOM so spreadsheet apps, including Excel on Windows, read names correctly. Access hashes are account-bound authorization data: keep exports private. Telegram may withhold participants even from an admin; `0` rows or fewer rows than displayed member count do not prove a bug in this tool.
+CSV columns are `username,user_id,user_access_hash,name,group,group_id`. File is UTF-8 with a BOM so spreadsheet apps, including Excel on Windows, read names correctly. Access hashes are account-bound authorization data: keep exports private. The success message reports **visible** members; completeness is unknown. Telegram may withhold participants even from an admin; `0` rows or fewer rows than displayed member count do not prove a bug in this tool.
 
 ## Invite users
 
@@ -71,9 +71,13 @@ Use this only for members you are authorized to invite. Telegram privacy and rat
 python telegram_csv.py preview members.csv
 python telegram_csv.py invite CHAT_ID members.csv
 python telegram_csv.py invite CHAT_ID members.csv --execute
+python telegram_csv.py invite CHAT_ID members.csv --execute --progress invite-progress.csv
+python telegram_csv.py invite CHAT_ID members.csv --execute --progress invite-progress.csv --resume
 ```
 
-`invite` without `--execute` validates input only and does not connect to Telegram. Actual invitations require `--execute` and default to a 60-second delay between successful invitations. `--delay N` changes delay. Tool stops on Telegram flood errors; retries and account restrictions remain Telegram's decision. `user_id` plus `user_access_hash` work only when valid for signed-in account.
+`invite` without `--execute` validates input only and does not connect to Telegram. Actual invitations require `--execute` and default to a 60-second delay between attempts. `--delay N` changes delay. Tool stops on Telegram flood errors; retries and account restrictions remain Telegram's decision. `user_id` plus `user_access_hash` work only when valid for signed-in account. Telegram can return a completed request with `missing_invitees`; those users are reported as not invited, not counted as successes.
+
+`--progress PATH.csv` is optional. It writes each confirmed outcome immediately to a private CSV checkpoint. Existing progress files are never overwritten without `--resume`. Resume requires the same chat and skips every recorded outcome, including declined and privacy-blocked users; it does not retry them. An invite interrupted between Telegram's response and checkpoint write can have an unknown outcome: check membership before explicitly resuming. After a flood error, wait for Telegram's restriction to clear before resuming. Progress CSVs contain user identifiers, are ignored by Git, and should be kept private. The original numbered menu still works without a checkpoint.
 
 ## Tests
 

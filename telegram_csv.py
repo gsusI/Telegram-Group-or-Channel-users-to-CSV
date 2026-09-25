@@ -14,6 +14,7 @@ from pathlib import Path
 
 CSV_COLUMNS = ("username", "user_id", "user_access_hash", "name", "group", "group_id")
 LEGACY_CSV_COLUMNS = ("username", "user id", "access hash", "name", "group", "group id")
+PROGRESS_COLUMNS = ("chat_id", "user_id", "username", "status")
 COMMANDS = {"dialogs", "export", "preview", "invite"}
 
 
@@ -113,11 +114,17 @@ def export_members(client, chat, output, overwrite=False, legacy=False):
             temporary = Path(stream.name)
             writer = csv.writer(stream, lineterminator="\n" if legacy else "\r\n")
             writer.writerow(LEGACY_CSV_COLUMNS if legacy else CSV_COLUMNS)
-            for user in client.iter_participants(chat):
-                name = " ".join(part for part in (user.first_name, user.last_name) if part)
-                writer.writerow((user.username or "", user.id, user.access_hash or "",
-                                 name, chat.title, chat.id))
-                count += 1
+            try:
+                for user in client.iter_participants(chat):
+                    name = " ".join(part for part in (user.first_name, user.last_name) if part)
+                    writer.writerow((user.username or "", user.id, user.access_hash or "",
+                                     name, chat.title, chat.id))
+                    count += 1
+            except Exception as error:
+                from telethon.errors import ChatAdminRequiredError
+                if isinstance(error, ChatAdminRequiredError):
+                    raise ValueError("Telegram requires admin access to list members of this chat") from error
+                raise
         os.replace(temporary, output)
         return count
     finally:
@@ -125,31 +132,102 @@ def export_members(client, chat, output, overwrite=False, legacy=False):
             temporary.unlink(missing_ok=True)
 
 
+def _invitee_key(invitee):
+    if invitee.user_id is not None:
+        return ("id", str(invitee.user_id))
+    return ("username", invitee.username.casefold())
+
+
+def _read_progress(path, chat_id):
+    outcomes = {}
+    with path.open("r", encoding="utf-8-sig", newline="") as stream:
+        rows = csv.DictReader(stream)
+        if rows.fieldnames != list(PROGRESS_COLUMNS):
+            raise ValueError("Progress CSV has an invalid header")
+        for row in rows:
+            if row["chat_id"] != str(chat_id):
+                raise ValueError("Progress CSV belongs to a different chat")
+            if row["status"] not in {"invited", "not_invited", "privacy_blocked"}:
+                raise ValueError("Progress CSV has an invalid status")
+            key = ("id", row["user_id"]) if row["user_id"] else ("username", row["username"].casefold())
+            if not key[1]:
+                raise ValueError("Progress CSV has a row without an invitee")
+            outcomes[key] = row
+    return outcomes
+
+
+def _write_progress(path, outcomes):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8-sig", newline="",
+                                         prefix=f".{path.name}.", suffix=".tmp",
+                                         dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            writer = csv.DictWriter(stream, fieldnames=PROGRESS_COLUMNS)
+            writer.writeheader()
+            writer.writerows(outcomes.values())
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def invite_members(client, chat, invitees, delay=60, execute=False, sleep=time.sleep,
-                   by_id=False):
-    """Return (invited, privacy_skipped); stop on Telegram flood limits."""
+                   by_id=False, progress=None, resume=False):
+    """Return (invited, not_invited); stop on Telegram flood limits."""
     if not execute:
         return 0, 0
+    if resume and progress is None:
+        raise ValueError("--resume requires --progress")
     from telethon.errors import FloodWaitError, PeerFloodError, UserPrivacyRestrictedError
     from telethon.tl.functions.channels import InviteToChannelRequest
     from telethon.tl.types import InputPeerUser
 
+    progress = Path(progress).expanduser() if progress is not None else None
+    if progress and progress.suffix != ".csv":
+        raise ValueError("Progress path must end in .csv so Git ignores it")
+    if resume and not progress.is_file():
+        raise ValueError(f"Progress CSV does not exist: {progress}")
+    if progress and progress.exists() and not resume:
+        raise FileExistsError(f"{progress} already exists; pass --resume to use it")
+    outcomes = _read_progress(progress, chat.id) if resume else {}
     invited = skipped = 0
-    for invitee in invitees:
+    for index, invitee in enumerate(invitees):
+        key = _invitee_key(invitee)
+        if key in outcomes:
+            print(f"Already recorded {invitee.username or invitee.user_id}: {outcomes[key]['status']}")
+            continue
         try:
             user = (InputPeerUser(invitee.user_id, invitee.access_hash)
                     if by_id or not invitee.username
                     else client.get_input_entity(invitee.username))
-            client(InviteToChannelRequest(chat, [user]))
-            invited += 1
-            print(f"Invited {invitee.username or invitee.user_id}")
-            if delay and invited < len(invitees):
-                sleep(delay)
+            result = client(InviteToChannelRequest(chat, [user]))
+            if not hasattr(result, "missing_invitees"):
+                raise RuntimeError("Telegram returned an unknown invite result; outcome was not recorded")
+            if result.missing_invitees:
+                skipped += 1
+                status = "not_invited"
+                print(f"Telegram did not invite {invitee.username or invitee.user_id}", file=sys.stderr)
+            else:
+                invited += 1
+                status = "invited"
+                print(f"Invited {invitee.username or invitee.user_id}")
         except UserPrivacyRestrictedError:
             skipped += 1
+            status = "privacy_blocked"
             print(f"Privacy settings blocked {invitee.username or invitee.user_id}", file=sys.stderr)
         except (PeerFloodError, FloodWaitError) as error:
             raise RuntimeError(f"Telegram rate limit; stopped after {invited} invites: {error}") from error
+        if progress:
+            outcomes[key] = {"chat_id": str(chat.id), "user_id": str(invitee.user_id or ""),
+                             "username": invitee.username,
+                             "status": status}
+            _write_progress(progress, outcomes)
+        if delay and index < len(invitees) - 1:
+            sleep(delay)
     return invited, skipped
 
 
@@ -219,7 +297,8 @@ def legacy_main(argv, credentials=None):
             if mode == 1:
                 chat = _choose_chat(available, "Choose a group to scrape members from:")
                 count = export_members(client, chat, legacy_output(chat), overwrite=True, legacy=True)
-                print(f"Members scraped successfully. Exported {count} visible member(s).")
+                print(f"Members scraped successfully. Exported {count} visible member(s). "
+                      "Telegram may hide others; completeness is unknown.")
             else:
                 available = [dialog for dialog in available
                              if getattr(dialog.entity, "megagroup", False)]
@@ -234,7 +313,7 @@ def legacy_main(argv, credentials=None):
                     raise ValueError("Invalid mode; choose 1 or 2")
                 invited, skipped = invite_members(client, chat, invitees, execute=True,
                                                   by_id=selection == 2)
-                print(f"Invited {invited}; privacy blocked {skipped}")
+                print(f"Invited {invited}; not invited {skipped}")
         finally:
             client.disconnect()
         return 0
@@ -258,6 +337,8 @@ def build_parser():
     invite.add_argument("csv_file", type=Path)
     invite.add_argument("--execute", action="store_true", help="send invitations; otherwise preview only")
     invite.add_argument("--delay", type=int, default=60, help="seconds between invitations (default: 60)")
+    invite.add_argument("--progress", type=Path, help="write invite outcomes to a private CSV checkpoint")
+    invite.add_argument("--resume", action="store_true", help="skip outcomes recorded in --progress")
     return parser
 
 
@@ -274,6 +355,16 @@ def main(argv=None, credentials=None):
                 return 0
         if args.command == "invite" and args.delay < 0:
             raise ValueError("--delay must be zero or greater")
+        if args.command == "invite" and args.resume and args.progress is None:
+            raise ValueError("--resume requires --progress")
+        if args.command == "invite" and args.progress is not None:
+            args.progress = args.progress.expanduser()
+            if args.progress.suffix != ".csv":
+                raise ValueError("Progress path must end in .csv so Git ignores it")
+            if args.resume and not args.progress.is_file():
+                raise ValueError(f"Progress CSV does not exist: {args.progress}")
+            if not args.resume and args.progress.exists():
+                raise FileExistsError(f"{args.progress} already exists; pass --resume to use it")
 
         client = connect_client(credentials)
         try:
@@ -286,12 +377,14 @@ def main(argv=None, credentials=None):
                 if args.command == "export":
                     output = args.output or default_output(chat)
                     count = export_members(client, chat, output, args.overwrite)
-                    print(f"Exported {count} visible member(s) to {output}")
+                    print(f"Exported {count} visible member(s) to {output}. "
+                          "Telegram may hide others; completeness is unknown.")
                 elif args.command == "invite":
                     if not getattr(chat, "megagroup", False) and not getattr(chat, "broadcast", False):
                         raise ValueError("Invites support supergroups and channels only")
-                    invited, skipped = invite_members(client, chat, invitees, args.delay, True)
-                    print(f"Invited {invited}; privacy blocked {skipped}")
+                    invited, skipped = invite_members(client, chat, invitees, args.delay, True,
+                                                      progress=args.progress, resume=args.resume)
+                    print(f"Invited {invited}; not invited {skipped}")
         finally:
             client.disconnect()
         return 0
