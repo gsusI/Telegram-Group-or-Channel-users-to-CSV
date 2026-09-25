@@ -86,6 +86,26 @@ class CsvTests(unittest.TestCase):
                                 overwrite=True)
         self.assertEqual(output.read_text(encoding="utf-8"), "existing")
 
+    def test_wrapped_admin_error_keeps_existing_export(self):
+        from telethon.errors import ChatAdminRequiredError
+        from telethon.errors.common import MultiError
+        from telethon.tl.functions.channels import GetParticipantsRequest
+        from telethon.tl.types import ChannelParticipantsRecent, InputChannel
+
+        request = GetParticipantsRequest(InputChannel(9, 10), ChannelParticipantsRecent(),
+                                         offset=0, limit=1, hash=0)
+        error = MultiError([ChatAdminRequiredError(request), None],
+                           [None, None], [request, request])
+        output = Path(self.directory.name) / "members.csv"
+        output.write_text("existing", encoding="utf-8")
+        client = Mock()
+        client.iter_participants.side_effect = error
+        with self.assertRaisesRegex(ValueError, "admin access"):
+            tool.export_members(client, SimpleNamespace(id=9, title="Group"), output,
+                                overwrite=True)
+        self.assertEqual(output.read_text(encoding="utf-8"), "existing")
+        self.assertEqual(list(Path(self.directory.name).glob("*.tmp")), [])
+
     def test_all_dialogs_and_duplicate_names(self):
         items = [SimpleNamespace(id=index, name="same", entity=object(),
                                  is_group=True, is_channel=False) for index in range(250)]

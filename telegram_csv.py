@@ -125,7 +125,11 @@ def export_members(client, chat, output, overwrite=False, legacy=False):
                     count += 1
             except Exception as error:
                 from telethon.errors import ChatAdminRequiredError
-                if isinstance(error, ChatAdminRequiredError):
+                from telethon.errors.common import MultiError
+                admin_required = isinstance(error, ChatAdminRequiredError) or (
+                    isinstance(error, MultiError) and
+                    any(isinstance(item, ChatAdminRequiredError) for item in error.exceptions))
+                if admin_required:
                     raise ValueError("Telegram requires admin access to list members of this chat") from error
                 raise
         os.replace(temporary, output)
