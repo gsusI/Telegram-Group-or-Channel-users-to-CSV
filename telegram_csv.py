@@ -16,6 +16,9 @@ CSV_COLUMNS = ("username", "user_id", "user_access_hash", "name", "group", "grou
 LEGACY_CSV_COLUMNS = ("username", "user id", "access hash", "name", "group", "group id")
 PROGRESS_COLUMNS = ("chat_id", "user_id", "username", "status")
 COMMANDS = {"dialogs", "export", "preview", "invite"}
+INVITE_WARNING = ("Warning: unwanted or repeated invitations can restrict or ban your "
+                  "Telegram account. A delay does not guarantee safety. Invite only people "
+                  "who expect to be added.")
 
 
 @dataclass(frozen=True)
@@ -291,6 +294,8 @@ def legacy_main(argv, credentials=None):
             return 0
 
         invitees = read_invitees(argv[0]) if mode == 2 else None
+        if mode == 2:
+            print(INVITE_WARNING, file=sys.stderr)
         client = connect_client(credentials, legacy=True)
         try:
             available = dialogs(client)
@@ -365,6 +370,8 @@ def main(argv=None, credentials=None):
                 raise ValueError(f"Progress CSV does not exist: {args.progress}")
             if not args.resume and args.progress.exists():
                 raise FileExistsError(f"{args.progress} already exists; pass --resume to use it")
+        if args.command == "invite":
+            print(INVITE_WARNING, file=sys.stderr)
 
         client = connect_client(credentials)
         try:

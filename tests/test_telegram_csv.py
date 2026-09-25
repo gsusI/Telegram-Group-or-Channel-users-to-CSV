@@ -1,4 +1,5 @@
 import csv
+import io
 import os
 import tempfile
 import unittest
@@ -99,6 +100,21 @@ class CsvTests(unittest.TestCase):
 
 
 class InviteTests(unittest.TestCase):
+    def test_execute_warns_before_connecting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "users.csv"
+            path.write_text("alice\n", encoding="utf-8")
+            stderr = io.StringIO()
+            client = Mock()
+            chat = SimpleNamespace(id=9, megagroup=True)
+            with patch.object(tool, "connect_client", return_value=client) as connect, \
+                 patch.object(tool, "resolve_chat", return_value=chat), \
+                 patch.object(tool, "invite_members", return_value=(0, 0)), \
+                 patch("sys.stderr", stderr):
+                self.assertEqual(tool.main(["invite", "9", str(path), "--execute"]), 0)
+            connect.assert_called_once()
+            self.assertIn("restrict or ban", stderr.getvalue())
+
     def test_preview_never_calls_telegram(self):
         client = Mock()
         self.assertEqual(tool.invite_members(client, object(), [tool.Invitee("alice")]), (0, 0))
@@ -224,8 +240,10 @@ class LegacyMenuTests(unittest.TestCase):
             client.iter_dialogs.return_value = iter([item])
             with patch("builtins.input", side_effect=["2", "0", "1"]), \
                  patch.object(tool, "connect_client", return_value=client), \
-                 patch.object(tool, "invite_members", return_value=(1, 0)) as invite:
+                 patch.object(tool, "invite_members", return_value=(1, 0)) as invite, \
+                 patch("sys.stderr", io.StringIO()) as stderr:
                 self.assertEqual(tool.main([str(path)], credentials=(123, "hash", "+34111")), 0)
+            self.assertIn("restrict or ban", stderr.getvalue())
             self.assertEqual(invite.call_args.args[2], [tool.Invitee("alice")])
             self.assertTrue(invite.call_args.kwargs["execute"])
             client.disconnect.assert_called_once()

@@ -65,7 +65,9 @@ CSV columns are `username,user_id,user_access_hash,name,group,group_id`. File is
 
 ## Invite users
 
-Use this only for members you are authorized to invite. Telegram privacy and rate limits still apply. CSV can contain one username per line, `username,user_id,user_access_hash`, or full exported format. Header row is optional; data's first row is never discarded.
+**Account risk:** Unwanted or repeated invitations can restrict or ban your Telegram account. A 60-second delay does not make an invite run safe. Invite only people who expect to be added. If Telegram limits your account, stop; do not rotate accounts or automate retries to evade the limit. Telegram alone decides restrictions and appeals. See [Telegram's API policy](https://core.telegram.org/api/obtaining_api_id) and [spam FAQ](https://telegram.org/faq_spam).
+
+CSV can contain one username per line, `username,user_id,user_access_hash`, or full exported format. Header row is optional; data's first row is never discarded.
 
 ```sh
 python telegram_csv.py preview members.csv
