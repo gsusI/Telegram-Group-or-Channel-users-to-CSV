@@ -10,6 +10,12 @@ from unittest.mock import Mock, patch
 import telegram_csv as tool
 
 
+def basic_chat(chat_id=9):
+    from telethon.tl.types import Chat
+    return Chat(chat_id, "Basic Group", photo=None, participants_count=0,
+                date=None, version=1)
+
+
 class CsvTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -120,6 +126,79 @@ class CsvTests(unittest.TestCase):
 
 
 class InviteTests(unittest.TestCase):
+    def test_basic_group_uses_chat_request_without_forwarding_history(self):
+        from telethon.tl.functions.messages import AddChatUserRequest
+        from telethon.tl.types import InputPeerUser
+        from telethon.tl.types.messages import InvitedUsers
+
+        client = Mock()
+        client.return_value = InvitedUsers(updates=None, missing_invitees=[])
+        invitee = tool.Invitee("alice", 1, 11)
+        self.assertEqual(tool.invite_members(client, basic_chat(), [invitee], delay=0,
+                                             execute=True, by_id=True), (1, 0))
+        request = client.call_args.args[0]
+        self.assertIsInstance(request, AddChatUserRequest)
+        self.assertEqual(request.chat_id, 9)
+        self.assertEqual(request.fwd_limit, 0)
+        self.assertIsInstance(request.user_id, InputPeerUser)
+        client.get_input_entity.assert_not_called()
+
+    def test_cli_executes_basic_group_invite(self):
+        from telethon.tl.functions.messages import AddChatUserRequest
+        from telethon.tl.types.messages import InvitedUsers
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "users.csv"
+            path.write_text("alice\n", encoding="utf-8")
+            client = Mock()
+            client.get_input_entity.return_value = "alice"
+            client.return_value = InvitedUsers(updates=None, missing_invitees=[])
+            with patch.object(tool, "connect_client", return_value=client), \
+                 patch.object(tool, "resolve_chat", return_value=basic_chat()), \
+                 patch("sys.stderr", io.StringIO()):
+                self.assertEqual(tool.main(["invite", "9", str(path), "--execute",
+                                            "--delay", "0"]), 0)
+            self.assertIsInstance(client.call_args.args[0], AddChatUserRequest)
+            client.disconnect.assert_called_once()
+
+    def test_basic_group_decline_and_already_member_are_not_success(self):
+        from telethon.errors import UserAlreadyParticipantError
+        from telethon.tl.types import MissingInvitee
+        from telethon.tl.types.messages import InvitedUsers
+
+        client = Mock()
+        client.get_input_entity.side_effect = ["alice", "bob"]
+        client.side_effect = [InvitedUsers(updates=None,
+                                          missing_invitees=[MissingInvitee(user_id=1)]),
+                              UserAlreadyParticipantError(request=None)]
+        invitees = [tool.Invitee("alice"), tool.Invitee("bob")]
+        self.assertEqual(tool.invite_members(client, basic_chat(), invitees,
+                                             delay=0, execute=True), (0, 2))
+
+    def test_basic_group_checkpoint_is_separate_from_channel_id(self):
+        from telethon.tl.types.messages import InvitedUsers
+
+        with tempfile.TemporaryDirectory() as directory:
+            progress = Path(directory) / "progress.csv"
+            client = Mock()
+            client.get_input_entity.return_value = "alice"
+            client.return_value = InvitedUsers(updates=None, missing_invitees=[])
+            invitees = [tool.Invitee("alice")]
+            self.assertEqual(tool.invite_members(client, basic_chat(), invitees,
+                                                 delay=0, execute=True,
+                                                 progress=progress), (1, 0))
+            with progress.open(encoding="utf-8-sig", newline="") as stream:
+                self.assertEqual(next(csv.DictReader(stream))["chat_id"], "basic:9")
+            resumed = Mock()
+            self.assertEqual(tool.invite_members(resumed, basic_chat(), invitees,
+                                                 delay=0, execute=True,
+                                                 progress=progress, resume=True), (0, 0))
+            resumed.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "different chat"):
+                tool.invite_members(Mock(), SimpleNamespace(id=9, megagroup=True),
+                                    invitees, delay=0, execute=True,
+                                    progress=progress, resume=True)
+
     def test_execute_warns_before_connecting(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "users.csv"
@@ -142,6 +221,7 @@ class InviteTests(unittest.TestCase):
 
     def test_rate_limit_stops_remaining_invites(self):
         from telethon.errors import PeerFloodError
+        from telethon.tl.functions.channels import InviteToChannelRequest
 
         client = Mock()
         client.get_input_entity.side_effect = ["first", "second"]
@@ -151,6 +231,20 @@ class InviteTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "stopped after 1 invites"):
             tool.invite_members(client, object(), invitees, delay=0, execute=True)
         self.assertEqual(client.call_count, 2)
+        self.assertIsInstance(client.call_args_list[0].args[0], InviteToChannelRequest)
+
+    def test_basic_group_admin_error_stops_without_checkpoint(self):
+        from telethon.errors import ChatAdminRequiredError
+
+        with tempfile.TemporaryDirectory() as directory:
+            progress = Path(directory) / "progress.csv"
+            client = Mock()
+            client.get_input_entity.return_value = "alice"
+            client.side_effect = ChatAdminRequiredError(request=None)
+            with self.assertRaisesRegex(RuntimeError, "admin permission"):
+                tool.invite_members(client, basic_chat(), [tool.Invitee("alice")],
+                                    delay=0, execute=True, progress=progress)
+            self.assertFalse(progress.exists())
 
     def test_missing_invitee_is_not_reported_as_success(self):
         from telethon.tl.types import MissingInvitee
@@ -283,6 +377,23 @@ class LegacyMenuTests(unittest.TestCase):
                  patch("sys.stderr", io.StringIO()):
                 self.assertEqual(tool.main([str(path)]), 0)
             self.assertIs(invite.call_args.args[1], channel)
+            client.disconnect.assert_called_once()
+
+    def test_numbered_invite_flow_lists_basic_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "users.csv"
+            path.write_text("alice\n", encoding="utf-8")
+            client = Mock()
+            chat = basic_chat()
+            item = SimpleNamespace(id=9, name="Basic Group", entity=chat,
+                                   is_group=True, is_channel=False)
+            client.iter_dialogs.return_value = iter([item])
+            with patch("builtins.input", side_effect=["2", "0", "1"]), \
+                 patch.object(tool, "connect_client", return_value=client), \
+                 patch.object(tool, "invite_members", return_value=(1, 0)) as invite, \
+                 patch("sys.stderr", io.StringIO()):
+                self.assertEqual(tool.main([str(path)]), 0)
+            self.assertIs(invite.call_args.args[1], chat)
             client.disconnect.assert_called_once()
 
 

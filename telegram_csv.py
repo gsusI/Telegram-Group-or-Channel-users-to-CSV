@@ -145,6 +145,17 @@ def _invitee_key(invitee):
     return ("username", invitee.username.casefold())
 
 
+def _is_basic_group(chat):
+    from telethon.tl.types import Chat
+    return (isinstance(chat, Chat) and not chat.deactivated and
+            chat.migrated_to is None and not chat.left)
+
+
+def _progress_chat_id(chat):
+    # Keep existing channel checkpoints readable while separating basic-chat IDs.
+    return f"basic:{chat.id}" if _is_basic_group(chat) else str(chat.id)
+
+
 def _read_progress(path, chat_id):
     outcomes = {}
     with path.open("r", encoding="utf-8-sig", newline="") as stream:
@@ -154,7 +165,7 @@ def _read_progress(path, chat_id):
         for row in rows:
             if row["chat_id"] != str(chat_id):
                 raise ValueError("Progress CSV belongs to a different chat")
-            if row["status"] not in {"invited", "not_invited", "privacy_blocked"}:
+            if row["status"] not in {"invited", "not_invited", "privacy_blocked", "already_member"}:
                 raise ValueError("Progress CSV has an invalid status")
             key = ("id", row["user_id"]) if row["user_id"] else ("username", row["username"].casefold())
             if not key[1]:
@@ -189,10 +200,14 @@ def invite_members(client, chat, invitees, delay=60, execute=False, sleep=time.s
         return 0, 0
     if resume and progress is None:
         raise ValueError("--resume requires --progress")
-    from telethon.errors import FloodWaitError, PeerFloodError, UserPrivacyRestrictedError
+    from telethon.errors import (ChatAdminRequiredError, FloodWaitError, PeerFloodError,
+                                 UserAlreadyParticipantError, UserNotMutualContactError,
+                                 UserPrivacyRestrictedError)
     from telethon.tl.functions.channels import InviteToChannelRequest
+    from telethon.tl.functions.messages import AddChatUserRequest
     from telethon.tl.types import InputPeerUser
 
+    basic_group = _is_basic_group(chat)
     progress = Path(progress).expanduser() if progress is not None else None
     if progress and progress.suffix != ".csv":
         raise ValueError("Progress path must end in .csv so Git ignores it")
@@ -200,7 +215,8 @@ def invite_members(client, chat, invitees, delay=60, execute=False, sleep=time.s
         raise ValueError(f"Progress CSV does not exist: {progress}")
     if progress and progress.exists() and not resume:
         raise FileExistsError(f"{progress} already exists; pass --resume to use it")
-    outcomes = _read_progress(progress, chat.id) if resume else {}
+    progress_chat_id = _progress_chat_id(chat) if progress else None
+    outcomes = _read_progress(progress, progress_chat_id) if resume else {}
     invited = skipped = 0
     for index, invitee in enumerate(invitees):
         key = _invitee_key(invitee)
@@ -211,7 +227,9 @@ def invite_members(client, chat, invitees, delay=60, execute=False, sleep=time.s
             user = (InputPeerUser(invitee.user_id, invitee.access_hash)
                     if by_id or not invitee.username
                     else client.get_input_entity(invitee.username))
-            result = client(InviteToChannelRequest(chat, [user]))
+            request = (AddChatUserRequest(chat.id, user, fwd_limit=0)
+                       if basic_group else InviteToChannelRequest(chat, [user]))
+            result = client(request)
             if not hasattr(result, "missing_invitees"):
                 raise RuntimeError("Telegram returned an unknown invite result; outcome was not recorded")
             if result.missing_invitees:
@@ -226,10 +244,21 @@ def invite_members(client, chat, invitees, delay=60, execute=False, sleep=time.s
             skipped += 1
             status = "privacy_blocked"
             print(f"Privacy settings blocked {invitee.username or invitee.user_id}", file=sys.stderr)
+        except UserNotMutualContactError:
+            skipped += 1
+            status = "not_invited"
+            print(f"Telegram requires a mutual contact for {invitee.username or invitee.user_id}",
+                  file=sys.stderr)
+        except UserAlreadyParticipantError:
+            skipped += 1
+            status = "already_member"
+            print(f"Already a member: {invitee.username or invitee.user_id}")
+        except ChatAdminRequiredError as error:
+            raise RuntimeError("Telegram requires admin permission to invite users to this chat") from error
         except (PeerFloodError, FloodWaitError) as error:
             raise RuntimeError(f"Telegram rate limit; stopped after {invited} invites: {error}") from error
         if progress:
-            outcomes[key] = {"chat_id": str(chat.id), "user_id": str(invitee.user_id or ""),
+            outcomes[key] = {"chat_id": progress_chat_id, "user_id": str(invitee.user_id or ""),
                              "username": invitee.username,
                              "status": status}
             _write_progress(progress, outcomes)
@@ -310,7 +339,8 @@ def legacy_main(argv, credentials=None):
                       "Telegram may hide others; completeness is unknown.")
             else:
                 available = [dialog for dialog in available
-                             if (getattr(dialog.entity, "megagroup", False) or
+                             if (_is_basic_group(dialog.entity) or
+                                 getattr(dialog.entity, "megagroup", False) or
                                  getattr(dialog.entity, "broadcast", False))]
                 chat = _choose_chat(available, "Choose a group or channel to add members:")
                 selection = int(input("Enter 1 to add by username or 2 to add by ID: "))
@@ -342,7 +372,7 @@ def build_parser():
     export.add_argument("--overwrite", action="store_true")
     preview = commands.add_parser("preview", help="validate an invite CSV without connecting")
     preview.add_argument("csv_file", type=Path)
-    invite = commands.add_parser("invite", help="invite users to a supergroup or channel")
+    invite = commands.add_parser("invite", help="invite users to a basic group, supergroup, or channel")
     invite.add_argument("chat", help="chat ID, exact title, or public username")
     invite.add_argument("csv_file", type=Path)
     invite.add_argument("--execute", action="store_true", help="send invitations; otherwise preview only")
@@ -392,8 +422,9 @@ def main(argv=None, credentials=None):
                     print(f"Exported {count} visible member(s) to {output}. "
                           "Telegram may hide others; completeness is unknown.")
                 elif args.command == "invite":
-                    if not getattr(chat, "megagroup", False) and not getattr(chat, "broadcast", False):
-                        raise ValueError("Invites support supergroups and channels only")
+                    if (not _is_basic_group(chat) and not getattr(chat, "megagroup", False)
+                            and not getattr(chat, "broadcast", False)):
+                        raise ValueError("Invites support basic groups, supergroups, and channels only")
                     invited, skipped = invite_members(client, chat, invitees, args.delay, True,
                                                       progress=args.progress, resume=args.resume)
                     print(f"Invited {invited}; not invited {skipped}")

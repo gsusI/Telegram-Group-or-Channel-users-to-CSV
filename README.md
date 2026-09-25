@@ -1,6 +1,6 @@
 # Telegram members to CSV
 
-Export members visible to your Telegram account from a group or channel. You can also validate a CSV and invite its users to a supergroup or channel. Telegram controls which members you can see and who you can invite; an export may be incomplete even when the command succeeds.
+Export members visible to your Telegram account from a group or channel. You can also validate a CSV and invite its users to a basic group, supergroup, or channel. Telegram controls which members you can see and who you can invite; an export may be incomplete even when the command succeeds.
 
 Requires Python 3.10 or newer, a Telegram user account, and API credentials from [my.telegram.org](https://my.telegram.org/apps). This tool uses Telethon 1.x. It works with Python on Windows, macOS, and Linux; no shell-specific code is required.
 
@@ -13,7 +13,7 @@ python telethon-bot-add-users-to-groups.py
 python telethon-bot-add-users-to-groups.py members.csv
 ```
 
-Menu option 1 exports to the original `members-GROUP-NAME.csv` filename with the original `username,user id,access hash,name,group,group id` header. It replaces that file, as before. Option 2 lists supergroups and broadcast channels, prompts for username or ID mode, and sends invitations; the menu choice is the authorization for that action. Your account needs permission to invite users to the selected chat. Option 3 displays the CSV. Existing credentials can still be entered by editing `api_id`, `api_hash`, and `phone` near the top of the original script. When a real phone is configured there, its old session filename is reused. Environment variables override those values.
+Menu option 1 exports to the original `members-GROUP-NAME.csv` filename with the original `username,user id,access hash,name,group,group id` header. It replaces that file, as before. Option 2 lists basic groups, supergroups, and broadcast channels, prompts for username or ID mode, and sends invitations; the menu choice is the authorization for that action. Your account needs permission to invite users to the selected chat. Option 3 displays the CSV. Existing credentials can still be entered by editing `api_id`, `api_hash`, and `phone` near the top of the original script. When a real phone is configured there, its old session filename is reused. Environment variables override those values.
 
 ## Install
 
@@ -78,6 +78,8 @@ python telegram_csv.py invite CHAT_ID members.csv --execute --progress invite-pr
 ```
 
 `invite` without `--execute` validates input only and does not connect to Telegram. Actual invitations require `--execute` and default to a 60-second delay between attempts. `--delay N` changes delay. Tool stops on Telegram flood errors; retries and account restrictions remain Telegram's decision. `user_id` plus `user_access_hash` work only when valid for signed-in account. Telegram can return a completed request with `missing_invitees`; those users are reported as not invited, not counted as successes.
+
+Basic groups use Telegram's `messages.addChatUser` method with no chat-history forwarding. Supergroups and channels use `channels.inviteToChannel`. Both use the same CSV format and progress options. A basic group is selected by its ID or exact title; Telegram does not assign public usernames to basic groups.
 
 `--progress PATH.csv` is optional. It writes each confirmed outcome immediately to a private CSV checkpoint. Existing progress files are never overwritten without `--resume`. Resume requires the same chat and skips every recorded outcome, including declined and privacy-blocked users; it does not retry them. An invite interrupted between Telegram's response and checkpoint write can have an unknown outcome: check membership before explicitly resuming. After a flood error, wait for Telegram's restriction to clear before resuming. Progress CSVs contain user identifiers, are ignored by Git, and should be kept private. The original numbered menu still works without a checkpoint.
 
