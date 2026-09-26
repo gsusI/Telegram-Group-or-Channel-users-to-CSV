@@ -34,8 +34,8 @@ def check_browser(url):
                     "input[type=file]").set_input_files({
                         "name": label + ".csv", "mimeType": "text/csv", "buffer": data,
                     })
-            page.get_by_role("button", name="Compare exports", exact=True).click()
-            download_button = page.get_by_role("button", name="Download changes", exact=True)
+            page.get_by_role("button", name="Compare exports").click()
+            download_button = page.get_by_role("button", name="Download changes")
             download_button.wait_for()
             with page.expect_download() as event:
                 download_button.click()
@@ -47,9 +47,9 @@ def check_browser(url):
                     {"name": "earlier.csv", "mimeType": "text/csv", "buffer": earlier},
                     {"name": "later.csv", "mimeType": "text/csv", "buffer": later},
                 ])
-            page.get_by_role("button", name="Combine and deduplicate", exact=True).click()
+            page.get_by_role("button", name="Combine and deduplicate").click()
             with page.expect_download() as event:
-                page.get_by_role("button", name="Download unique members", exact=True).click()
+                page.get_by_role("button", name="Download unique members").click()
             rows = list(csv.DictReader(io.StringIO(Path(event.value.path()).read_text(encoding="utf-8-sig"))))
             assert len(rows) == 2 and "user_access_hash" not in rows[0], rows
             page.get_by_role("link", name="Invite", exact=False).click()
