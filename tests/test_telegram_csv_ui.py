@@ -74,7 +74,8 @@ class UiHelperTests(unittest.TestCase):
 class UiSmokeTests(unittest.TestCase):
     def test_app_opens_without_credentials_or_network(self):
         app_path = Path(__file__).parents[1] / "telegram_csv_ui.py"
-        with patch.dict(os.environ, {}, clear=True), patch("telethon.TelegramClient") as connect:
+        with patch.dict(os.environ, {"TELEGRAM_API_ID": "", "TELEGRAM_API_HASH": "",
+                                     "TELEGRAM_PHONE": ""}), patch("telethon.TelegramClient") as connect:
             app = AppTest.from_file(app_path, default_timeout=10).run()
         connect.assert_not_called()
         self.assertFalse(app.exception)
