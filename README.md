@@ -4,7 +4,42 @@ Export members visible to your Telegram account from a group or channel. You can
 
 Requires a Telegram user account and API credentials from [my.telegram.org](https://my.telegram.org/apps). Use Python 3.10 or newer, or download a standalone executable from [Releases](https://github.com/gsusI/Telegram-Group-or-Channel-users-to-CSV/releases). Windows x64, Linux x64, macOS Intel, and macOS Apple Silicon builds are produced for each release. Builds are unsigned; source installation remains available on every platform.
 
-**Quick start:** install or download, set `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`, run `telegram_csv.py doctor`, then `telegram_csv.py login --qr` or `telegram_csv.py login`, and finally `telegram_csv.py dialogs`. Standalone builds use the same commands without `python` and without the `.py` extension. QR login does not remove the API credential requirement.
+**Quick start:** install or download, set `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`, run the local browser UI or use the commands below. Standalone builds use the command interface without `python` and without the `.py` extension. QR login does not remove the API credential requirement.
+
+## Launch the portable UI
+
+For a source checkout, double-click **Start Telegram CSV.bat** on Windows or
+**Start Telegram CSV.command** on macOS. On Linux, run `python3 launch.py`.
+The launcher opens your browser, chooses an available local port, and uses the
+`data` folder beside the app for sessions and exports. Source startup requires
+Python 3.10+; if UI dependencies are missing it creates `.ui-venv` and installs them
+on first launch. Keep the launcher window open while using the app.
+
+The release workflow also builds `telegram-csv-ui-*` archives containing Python
+and all UI dependencies for Windows x64, Linux x64, macOS Intel and Apple Silicon.
+Extract the entire matching archive, then use its launch shortcut or executable.
+Download the portable UI from [Releases](https://github.com/gsusI/Telegram-Group-or-Channel-users-to-CSV/releases/latest).
+Choose a filename beginning with `telegram-csv-ui-`; filenames without `-ui` are terminal tools.
+See [PORTABLE.md](PORTABLE.md) for platform limits,
+moving the app, choosing a data folder, and manual browser startup.
+
+```sh
+python3 launch.py
+# Optional: use another writable data folder or open the browser yourself
+python3 launch.py --data-dir /path/to/data --no-browser
+```
+
+## Manual UI installation
+
+The Streamlit UI covers account sign-in, single or batch exports, recovery checkpoints, local comparison/deduplication, and permission-based invitations. It binds to `127.0.0.1`, keeps credentials in the local process, and stores Telegram's session on this computer. CSV previews omit access hashes.
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-ui.txt
+.venv/bin/python -m streamlit run telegram_csv_ui.py
+```
+
+On Windows, use `.venv\Scripts\python.exe` in the final two commands. Enter the API ID and API hash from [my.telegram.org](https://my.telegram.org/apps), then use **Send login code**, **Load my chats**, and **Export selected chats**. The API values can instead come from the existing `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and optional `TELEGRAM_PHONE` environment variables. Direct `streamlit run` uses the CLI's default session location; use `launch.py` for portable session storage.
 
 Release archives contain `telegram-csv` (macOS/Linux) or `telegram-csv.exe` (Windows). Extract one archive and run `./telegram-csv doctor` in a macOS/Linux terminal or `.\telegram-csv.exe doctor` in PowerShell. The macOS builds are not notarized, so macOS may ask you to approve first launch. Linux builds target x64 systems compatible with the GitHub Ubuntu runner; use Python source installation if your distribution cannot run that binary.
 

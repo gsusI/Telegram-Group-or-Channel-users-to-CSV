@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install -r requirements-ui.txt
       - run: python -m unittest discover -s tests -v
 
   build:
@@ -62,7 +62,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [build, build-ui]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -74,3 +74,43 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" release-assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+
+  build-ui:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset: telegram-csv-ui-linux-x64.tar.gz
+          - os: windows-latest
+            asset: telegram-csv-ui-windows-x64.zip
+          - os: macos-15-intel
+            asset: telegram-csv-ui-macos-intel.tar.gz
+          - os: macos-15
+            asset: telegram-csv-ui-macos-arm64.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-ui.txt pyinstaller
+      - run: python build_ui.py
+      - run: python -m pip install playwright
+      - run: python -m playwright install --with-deps chromium
+      - name: Check portable runtime and package
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python smoke_ui.py dist/telegram-csv-ui/telegram-csv-ui.exe --browser
+            powershell -NoProfile -Command "Compress-Archive -Path dist/telegram-csv-ui -DestinationPath dist/${{ matrix.asset }}"
+          else
+            python smoke_ui.py dist/telegram-csv-ui/telegram-csv-ui --browser
+            tar -czf "dist/${{ matrix.asset }}" -C dist telegram-csv-ui
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
