@@ -65,7 +65,7 @@ class MacAppTests(unittest.TestCase):
     def test_child_uses_same_bundled_executable_and_no_browser(self):
         with patch.object(macos_app.sys, "frozen", True, create=True), patch.object(macos_app.sys, "executable", "/tmp/Telegram CSV.app/Contents/MacOS/Telegram CSV"):
             command = macos_app.server_command(8510, Path("/tmp/data folder"))
-        self.assertEqual(command, ["/tmp/Telegram CSV.app/Contents/MacOS/Telegram CSV", "--serve", "--no-browser", "--port", "8510", "--data-dir", "/tmp/data folder"])
+        self.assertEqual(command, ["/tmp/Telegram CSV.app/Contents/MacOS/Telegram CSV", "--serve", "--no-browser", "--port", "8510", "--data-dir", str(Path("/tmp/data folder"))])
 
     def test_quit_stops_owned_server(self):
         process = Mock()
