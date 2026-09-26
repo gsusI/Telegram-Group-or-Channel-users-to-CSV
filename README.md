@@ -18,6 +18,14 @@ on first launch. Keep the launcher window open while using the app.
 The release workflow also builds `telegram-csv-ui-*` archives containing Python
 and all UI dependencies for Windows x64, Linux x64, macOS Intel and Apple Silicon.
 Extract the entire matching archive, then use its launch shortcut or executable.
+On macOS, open **Telegram CSV.app** instead: one sealed app contains the launcher
+and server. If blocked, approve that app in **System Settings → Privacy & Security
+→ Open Anyway**. Use its **Telegram CSV** menu-bar item to reopen the browser or
+quit. macOS remembers approval for an unchanged app, but updates or device policies
+may require approval again. No Gatekeeper settings are changed by the app.
+Mac sessions and exports live in `~/Library/Application Support/Telegram CSV`,
+accessible through **Open data folder** in its menu; the application bundle stays
+unchanged. See the migration note in [PORTABLE.md](PORTABLE.md) for older exports.
 Download the portable UI from [Releases](https://github.com/gsusI/Telegram-Group-or-Channel-users-to-CSV/releases/latest).
 Choose a filename beginning with `telegram-csv-ui-`; filenames without `-ui` are terminal tools.
 See [PORTABLE.md](PORTABLE.md) for platform limits,

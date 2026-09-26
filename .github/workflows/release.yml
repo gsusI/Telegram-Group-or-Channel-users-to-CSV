@@ -105,6 +105,10 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             python smoke_ui.py dist/telegram-csv-ui/telegram-csv-ui.exe --browser
             powershell -NoProfile -Command "Compress-Archive -Path dist/telegram-csv-ui -DestinationPath dist/${{ matrix.asset }}"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            codesign --verify --deep --strict 'dist/Telegram CSV.app'
+            python smoke_ui.py 'dist/Telegram CSV.app/Contents/MacOS/Telegram CSV' --browser
+            tar -czf "dist/${{ matrix.asset }}" -C dist 'Telegram CSV.app'
           else
             python smoke_ui.py dist/telegram-csv-ui/telegram-csv-ui --browser
             tar -czf "dist/${{ matrix.asset }}" -C dist telegram-csv-ui
